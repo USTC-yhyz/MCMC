@@ -12,7 +12,7 @@ import multiprocessing as mp
 # ==========================================
 # 0. Global configuration
 # ==========================================
-FILE_PATH = 'data4.xlsx'               # Modify according to actual path
+FILE_PATH = 'data.xlsx'               # Modify according to actual path
 OUTPUT_PREFIX = 'MCMC_Full_Comparison_weighted'
 N_WALKERS = 200
 N_STEPS_BURN = 2000
