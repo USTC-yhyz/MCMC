@@ -118,16 +118,16 @@ cai_avg_priors = [{'em_idx': 1, 'param_idx': 1, 'mean': 9.0, 'sigma': 1.0}]
 cai_avg_four_priors = [{'em_idx': 2, 'param_idx': 1, 'mean': 9.0, 'sigma': 1.0}]
 four_cai_ultra_norm_priors = [
     {'em_idx': 1, 'param_idx': 1, 'mean': 9.0, 'sigma': 1.0},
-    {'em_idx': 1, 'param_idx': 4, 'mean': 14.88, 'sigma': 2.0},
     {'em_idx': 2, 'param_idx': 1, 'mean': 4.0, 'sigma': 1.0},
-    {'em_idx': 2, 'param_idx': 4, 'mean': 14.88, 'sigma': 2.0}
 ]
 
-# ========== Model configurations (only two, three, and four end-member models retained) ==========
+# ========== Model configurations ==========
+# Added 'similar_iso' constraint to four_nc to enforce similar isotopic compositions for NC_L and NC_H
 MODEL_CONFIGS = {
     'two':      {'names': TWO_NAMES,      'bounds': TWO_BOUNDS,      'n_ems': 2, 'nc_idxs': [0],      'ca_priors': cai_avg_priors},
     'three':    {'names': THREE_NAMES,    'bounds': THREE_BOUNDS,    'n_ems': 3, 'nc_idxs': [0],      'ca_priors': cai_avg_priors},
-    'four_nc':  {'names': FOUR_NC_NAMES,  'bounds': FOUR_NC_BOUNDS,  'n_ems': 4, 'nc_idxs': [0, 1],   'ca_priors': cai_avg_four_priors},
+    'four_nc':  {'names': FOUR_NC_NAMES,  'bounds': FOUR_NC_BOUNDS,  'n_ems': 4, 'nc_idxs': [0, 1],   'ca_priors': cai_avg_four_priors,
+                 'similar_iso': {'pairs': [(0,1)], 'sigma_e54': 0.1, 'sigma_e50': 0.1}},
     'four_cai': {'names': FOUR_CAI_NAMES, 'bounds': FOUR_CAI_BOUNDS, 'n_ems': 4, 'nc_idxs': [0],      'ca_priors': four_cai_ultra_norm_priors}
 }
 # Add labels to each configuration
@@ -151,11 +151,9 @@ def predict_mixture(f, ems):
     return np.array([mix_e54, mix_e50, mix_Cr, mix_Ti, mix_Mg, mix_Al, mix_Ni])
 
 def solve_fractions(obs, ems, sigma):
-    # ---- Fix: add defensive check to ensure sigma has correct shape ----
     sigma = np.asarray(sigma)
     if sigma.ndim != 1 or len(sigma) != 7:
         raise ValueError(f"sigma must be a 1D array of length 7, got shape {sigma.shape}")
-    # ---------------------------------------------------------
     n_ems = ems.shape[0]
     obs_e54, obs_e50 = obs[0], obs[1]
     R_CrTi_obs = obs[3] / obs[4]
@@ -235,6 +233,16 @@ def log_probability(theta, obs, bounds, cfg):
     if ca_priors is not None:
         lp += em_param_prior(ems, ca_priors)
 
+    # Additional constraint: similar isotopic composition for NC splits (only for four_nc)
+    sim_iso = cfg.get('similar_iso', None)
+    if sim_iso is not None:
+        for pair in sim_iso['pairs']:
+            i, j = pair
+            # penalize differences in ε54Cr
+            lp -= 0.5 * ((ems[i,0] - ems[j,0]) / sim_iso['sigma_e54'])**2
+            # penalize differences in ε50Ti
+            lp -= 0.5 * ((ems[i,1] - ems[j,1]) / sim_iso['sigma_e50'])**2
+
     if not np.isfinite(lp):
         return -np.inf
 
@@ -304,7 +312,7 @@ def compute_waic(flat_samples, obs, bounds, cfg, nsamp=200):
     return waic, waic_se, waic_vec
 
 # ==========================================
-# 6. Posterior predictive check and plotting (corrected)
+# 6. Posterior predictive check and plotting
 # ==========================================
 def posterior_predictive(flat_samples, obs, cfg, nsamp=100):
     sigmas = cfg['obs_sigmas']                # shape: (n_samples, 7)
@@ -339,7 +347,7 @@ def plot_waic_comparison(model_tags, waic_vals, waic_se, save_path):
 # 7. Main workflow
 # ==========================================
 def main():
-    print("🚀 Full model MCMC comparison (weighted, models: two, three, four_nc, four_cai)")
+    print("🚀 Full model MCMC comparison (weighted, models: two, three, four_nc (with similar iso constraint), four_cai)")
     model_tags = list(MODEL_CONFIGS.keys())
     results = {}
 
@@ -350,6 +358,8 @@ def main():
     for tag in model_tags:
         cfg = MODEL_CONFIGS[tag]
         print(f"\n{'='*40}\n▶ Running {tag} model ({cfg['n_ems']} end-members)")
+        if tag == 'four_nc':
+            print("   📌 Enforcing similar isotopic composition for NC_L and NC_H (σ_e54 = σ_e50 = 0.1)")
         backend = run_mcmc(obs_vals, cfg, tag, N_WALKERS, N_STEPS_BURN, N_STEPS_SAMPLE, THIN)
         flat = backend.get_chain(flat=True)
         results[tag] = {'flat': flat, 'cfg': cfg}
